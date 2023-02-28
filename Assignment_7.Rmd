@@ -1,0 +1,11 @@
+---
+title: "Assignment 7"
+author: "Chee Kay Cheong"
+date: "2023-02-29"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
