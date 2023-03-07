@@ -10,8 +10,8 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 
 library(tidyverse)
 library(caret)
+library(glmnet)
 library(gbm) 
-library(pROC) # ROC curve
 library(rpart.plot) # tree plots
 library(rpart) # CaRT
 library(e1071) # SVM 
@@ -19,24 +19,16 @@ library(e1071) # SVM
 
 Do 5-folds cv instead of 10-folds because the outcome is so so so small (only 159 outcomes)
 
-# Load and clean dataset 
+## Load and clean dataset 
 
 ```{r}
 # Load and clean dataset
 admission = read_csv("./Data/mi.data.csv") %>% 
   janitor::clean_names() %>% 
   select(-id) %>% 
-  mutate(
-    sex = as_factor(sex),
-    pulm_adema = as_factor(pulm_adema),
-    fc = as_factor(fc),
-    arr = as_factor(arr),
-    diab = as_factor(diab),
-    obesity = as_factor(obesity),
-    asthma = as_factor(asthma),
-    readmission = as_factor(readmission),
-    readmission = fct_recode(readmission, 'No' = '0', 'Yes' = '1'))
-
+  mutate(readmission = as_factor(readmission),
+         readmission = fct_recode(readmission, 'No' = '0', 'Yes' = '1'))
+  
 # Identify any rows that do not have complete cases (i.e. have missing data)
 miss.rows = admission[!complete.cases(admission), ]
 # No missing values detected.
@@ -49,7 +41,7 @@ summary(admission)
 # Readmission: Yes = 159, No = 1541 (Very unbalanced)
 ```
 
-# Data Partitioning
+## Data Partitioning
 
 Partition the data into training and testing using a 70/30 split.
 ```{r}
@@ -57,7 +49,7 @@ set.seed(123)
 
 training.index = 
   admission$readmission %>% 
-  createDataPartition(p = 0.7, list = F)
+  createDataPartition(p = 0.7, list = FALSE)
 
 training = admission[training.index, ]
 testing = admission[-training.index, ]
@@ -69,10 +61,123 @@ training %>%
   count()
 ```
 
-# Construct 3 prediction models, choose hyperparameters, and compare performance
+## Construct 3 prediction models, choose hyperparameters, and compare performance
 
-## LASSO
+### RIDGE
 
-## Support Vector Classifier
+```{r}
+set.seed(123)
 
-## Ensemble Method with Gradient Boosting
+lambda.grid = expand.grid(alpha = 0, lambda = seq(1, 115))
+
+control.settings = trainControl(method = "cv", number = 5, sampling = "up")
+
+ridge = train(readmission ~ ., data = training, method = "glmnet", preProc = c("center", "scale"), trControl = control.settings, tuneGrid = lambda.grid)
+
+# Find best tuned parameters
+ridge$bestTune
+# alpha = 0, lambda = 115
+ridge$results
+# Highest accuracy = 0.7430969
+
+# Check performance
+confusionMatrix(ridge)
+# Average accuracy = 0.7439
+# Only 1.8% of the data is correctly classified as those who are "Yes readmission" have been predicted as "Yes".
+# 18.1% of the data is misclassified as those who are "No readmission" have been incorrectly predicted as "Yes". 
+# 7.6% of the data is missclassified as those who are "Yes readmission" have been incorrectlt predicted as "No".
+
+# Check variable importance
+varImp(ridge)
+
+coef(ridge$finalModel, ridge$bestTune$lambda)
+```
+
+### Support Vector Classifier
+
+```{r}
+set.seed(123)
+
+tune_grid = expand.grid(C = seq(0.01, 0.5, length = 30))
+
+control.settings = trainControl(method = "cv", number = 5, sampling = "up")
+
+svm.model = train(readmission ~ ., data = training, method = "svmLinear", trControl = control.settings, preProcess = c("center", "scale"), tuneGrid = tune_grid)
+
+# Visualize accuracy versus values of C
+plot(svm.model)
+
+#See information about final model
+svm.model$results
+svm.model$finalModel
+# C = 0.0945, Highest Accuracy = 0.5886
+
+# Check performance
+confusionMatrix(svm.model)
+# Average accuracy = 0.5693
+# 5.5% of the data were correctly classified as those who are "Yes readmission" were classified as "Yes".
+# 37.2% of the data were misclassified as those who are "No readmission" were classified as "Yes".
+
+# varImp(svm.model) doesn't work with SVM model. Professor said no need to fix this before this assignment is due.
+```
+
+### Ensemble Method with Bagging
+
+```{r}
+set.seed(123)
+
+# We need to take out the outcome variable "Readmission" from the predictors pool.
+mtry.val = expand.grid(.mtry = ncol(training)-1)
+
+control.settings = trainControl(method = "cv", number = 5, sampling = "up")
+
+# Start with 100 trees.
+bag.100 = train(readmission ~ ., data = training, method = "rf", metric = "Accuracy", tuneGrid = mtry.val, ntree = 100, trControl = control.settings)
+
+bag.100$results 
+# Accuracy = 0.8783
+confusionMatrix(bag.100)
+# 0.2% correctly classified as those who are "Yes readmission" were classified as "Yes"
+# 2.9% misclassified as those who are "No readmission" were classified as "Yes"
+# 9.2% misclassified as those who are "Yes readmission" were classified as "No"
+varImp(bag.100)
+
+# Try 200 trees
+bag.200 = train(readmission ~ ., data = training, method = "rf", metric = "Accuracy", tuneGrid = mtry.val, ntree = 200, trControl = control.settings)
+
+bag.200$results
+# Accuracy = 0.8883
+confusionMatrix(bag.200)
+# 0.3% correctly classified as those who are "Yes readmission" were classified as "Yes"
+# 2.1% misclassified as those who are "No readmission" were classified as "Yes"
+# 9.1% misclassified as those who are "Yes readmission" were classified as "No"
+varImp(bag.200)
+```
+
+## Choose the "best" model
+
+I have performed Accuracy Test to compare performance of all three models. The Support Vector Classifier (SVM) model gives us the lowest accuracy among all three models, and it does not work with `varImp()` in `Caret`, which then I cannot look at the variable importance for this model. So I decided not to consider this model.
+
+Between the Ridge and Bagging models, I decided to choose the **Bagging model** because the Bagging model has a higher accuracy than the Ridge model.
+
+## Apply model to test set and calculate evaluation metrics
+
+I decided to use **Confusion Matrix** as the evaluation metrics for the test set because I don't know how to interpret an ROC curve.
+```{r}
+set.seed(123)
+
+# Make predictions in test set
+bag.pred.test = predict(bag.200, testing)
+
+# Get evaluation metrics from test set
+confusionMatrix(bag.pred.test, testing$readmission, positive = "Yes")
+
+# Check variable importance
+varImp(bag.200)
+```
+
+Based on the Confusion Matrix, the Ensemble method with Bagging model has an accuracy of 0.8821 (95% CI = 0.8509, 0.9088), with a sensitivity of 0.04 and a specificity of 0.97.
+The proportion of false negative is quite high because the positive predictive value is very low (0.12). 
+
+According to the final model ("Bag.200"), the predictor "wbc" is the most important variable (100%) to predict readmission, followed by "age" (80.57%), "esr" (69.22%), 
+"sodium" (63.42%), "alt" (57.85%), and so on.
