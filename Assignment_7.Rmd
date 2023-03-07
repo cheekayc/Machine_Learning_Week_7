@@ -5,7 +5,74 @@ date: "2023-02-29"
 output: github_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(caret)
+library(gbm) 
+library(pROC) # ROC curve
+library(rpart.plot) # tree plots
+library(rpart) # CaRT
+library(e1071) # SVM 
 ```
 
+Do 5-folds cv instead of 10-folds because the outcome is so so so small (only 159 outcomes)
+
+# Load and clean dataset 
+
+```{r}
+# Load and clean dataset
+admission = read_csv("./Data/mi.data.csv") %>% 
+  janitor::clean_names() %>% 
+  select(-id) %>% 
+  mutate(
+    sex = as_factor(sex),
+    pulm_adema = as_factor(pulm_adema),
+    fc = as_factor(fc),
+    arr = as_factor(arr),
+    diab = as_factor(diab),
+    obesity = as_factor(obesity),
+    asthma = as_factor(asthma),
+    readmission = as_factor(readmission),
+    readmission = fct_recode(readmission, 'No' = '0', 'Yes' = '1'))
+
+# Identify any rows that do not have complete cases (i.e. have missing data)
+miss.rows = admission[!complete.cases(admission), ]
+# No missing values detected.
+
+# Set 'No readmission' as reference Level
+admission$readmission = relevel(admission$readmission, ref = "No")
+
+# Check data distribution
+summary(admission)
+# Readmission: Yes = 159, No = 1541 (Very unbalanced)
+```
+
+# Data Partitioning
+
+Partition the data into training and testing using a 70/30 split.
+```{r}
+set.seed(123)
+
+training.index = 
+  admission$readmission %>% 
+  createDataPartition(p = 0.7, list = F)
+
+training = admission[training.index, ]
+testing = admission[-training.index, ]
+
+# I want to see if I have enough outcomes in my training dataset and if I should do "up" or "down" sample.
+training %>% 
+  select(readmission) %>% 
+  group_by(readmission) %>% 
+  count()
+```
+
+# Construct 3 prediction models, choose hyperparameters, and compare performance
+
+## LASSO
+
+## Support Vector Classifier
+
+## Ensemble Method with Gradient Boosting
